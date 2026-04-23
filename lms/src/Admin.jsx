@@ -70,6 +70,8 @@ const Admin = () => {
     moodle_id: "",
     book_id: "",
   });
+  const [directIssueBookSearch, setDirectIssueBookSearch] = useState("");
+  const [directIssueBookResults, setDirectIssueBookResults] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [successMsg, setSuccessMsg] = useState("");
@@ -252,7 +254,7 @@ const Admin = () => {
     setLoading(true);
     setError("");
     try {
-      const response = await fetch("http://127.0.0.1:5000/admin/analytics", {
+      const response = await fetch("http://127.0.0.1:5000/analytics/show", {
         method: "GET",
         headers: {
           Authorization: `Bearer ${token}`,
@@ -262,7 +264,7 @@ const Admin = () => {
 
       if (response.ok) {
         const data = await response.json();
-        setAnalyticsBooks(data.popular_books || []);
+        setAnalyticsBooks(data.top_books || []);
       } else if (response.status === 401 || response.status === 403) {
         localStorage.removeItem("user");
         navigate("/");
@@ -463,6 +465,54 @@ const Admin = () => {
         }
       },
     );
+  };
+
+  const searchDirectIssueBooks = async (query) => {
+    if (!query.trim()) {
+      setDirectIssueBookResults([]);
+      return;
+    }
+
+    const token = getToken();
+    if (!token) {
+      navigate("/");
+      return;
+    }
+
+    try {
+      const response = await fetch(
+        `http://127.0.0.1:5000/admin/all-books?search=${encodeURIComponent(query)}`,
+        {
+          method: "GET",
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "Content-Type": "application/json",
+          },
+        },
+      );
+
+      if (response.ok) {
+        const data = await response.json();
+        setDirectIssueBookResults(data.books || []);
+      } else if (response.status === 401 || response.status === 403) {
+        localStorage.removeItem("user");
+        navigate("/");
+      } else {
+        setDirectIssueBookResults([]);
+      }
+    } catch (error) {
+      console.error("Error searching books:", error);
+      setDirectIssueBookResults([]);
+    }
+  };
+
+  const selectBookForDirectIssue = (bookId) => {
+    setDirectIssueForm({
+      ...directIssueForm,
+      book_id: bookId,
+    });
+    setDirectIssueBookSearch("");
+    setDirectIssueBookResults([]);
   };
 
   const handleDirectIssue = async (e) => {
@@ -2198,10 +2248,10 @@ const Admin = () => {
                               fontSize: "14px",
                               borderBottom: "3px solid #4e806c",
                               textAlign: "center",
-                              width: "150px",
+                              width: "100px",
                             }}
                           >
-                            Total Issued
+                            Rating
                           </th>
                           <th
                             style={{
@@ -2211,7 +2261,20 @@ const Admin = () => {
                               fontSize: "14px",
                               borderBottom: "3px solid #4e806c",
                               textAlign: "center",
-                              width: "150px",
+                              width: "120px",
+                            }}
+                          >
+                            Times Issued
+                          </th>
+                          <th
+                            style={{
+                              padding: "15px",
+                              color: "#fff",
+                              fontWeight: "bold",
+                              fontSize: "14px",
+                              borderBottom: "3px solid #4e806c",
+                              textAlign: "center",
+                              width: "120px",
                             }}
                           >
                             Total Copies
@@ -2227,16 +2290,12 @@ const Admin = () => {
                               width: "120px",
                             }}
                           >
-                            Demand Level
+                            Available
                           </th>
                         </tr>
                       </thead>
                       <tbody>
                         {analyticsBooks.slice(0, 20).map((book) => {
-                          const demandLevel = getDemandLevel(
-                            book.total_issued,
-                            book.total_copies,
-                          );
                           return (
                             <tr
                               key={book.book_id}
@@ -2273,7 +2332,49 @@ const Admin = () => {
                                   fontWeight: "600",
                                 }}
                               >
-                                {book.total_issued}
+                                <div
+                                  style={{
+                                    display: "flex",
+                                    justifyContent: "center",
+                                    alignItems: "center",
+                                    gap: "4px",
+                                  }}
+                                >
+                                  {[...Array(5)].map((_, i) => (
+                                    <i
+                                      key={i}
+                                      className="fa-solid fa-star"
+                                      style={{
+                                        color:
+                                          i < Math.floor(book.rating)
+                                            ? "#d4b06f"
+                                            : "#ddd",
+                                        fontSize: "12px",
+                                      }}
+                                    ></i>
+                                  ))}
+                                  <span
+                                    style={{
+                                      marginLeft: "6px",
+                                      fontSize: "13px",
+                                    }}
+                                  >
+                                    {book.rating
+                                      ? book.rating.toFixed(1)
+                                      : "0.0"}
+                                  </span>
+                                </div>
+                              </td>
+                              <td
+                                style={{
+                                  padding: "15px",
+                                  color: "#333",
+                                  fontSize: "15px",
+                                  textAlign: "center",
+                                  fontWeight: "600",
+                                }}
+                              >
+                                {book.issue_count}
                               </td>
                               <td
                                 style={{
@@ -2289,13 +2390,16 @@ const Admin = () => {
                               <td
                                 style={{
                                   padding: "15px",
-                                  fontSize: "14px",
+                                  color:
+                                    book.available_copies > 0
+                                      ? "#2e7d32"
+                                      : "#d32f2f",
+                                  fontSize: "15px",
                                   textAlign: "center",
-                                  color: getDemandColor(demandLevel),
                                   fontWeight: "600",
                                 }}
                               >
-                                {demandLevel}
+                                {book.available_copies}
                               </td>
                             </tr>
                           );
@@ -2510,19 +2614,206 @@ const Admin = () => {
 
                   <div className="input-group">
                     <label>
-                      <i className="fa-solid fa-book"></i> Book ID
+                      <i className="fa-solid fa-book"></i> Search Book by Name
                     </label>
                     <input
-                      type="number"
-                      placeholder="Enter book ID"
+                      type="text"
+                      placeholder="Enter book name to search..."
+                      value={directIssueBookSearch}
+                      onChange={(e) => {
+                        setDirectIssueBookSearch(e.target.value);
+                        searchDirectIssueBooks(e.target.value);
+                      }}
+                    />
+                  </div>
+
+                  {directIssueBookResults.length > 0 && (
+                    <div
+                      style={{
+                        marginBottom: "20px",
+                        border: "2px solid #63A088",
+                        borderRadius: "8px",
+                        overflow: "hidden",
+                      }}
+                    >
+                      <div
+                        style={{
+                          backgroundColor: "#63A088",
+                          color: "#fff",
+                          padding: "12px 15px",
+                          fontWeight: "bold",
+                          fontSize: "14px",
+                        }}
+                      >
+                        Search Results ({directIssueBookResults.length} books)
+                      </div>
+                      <div style={{ maxHeight: "400px", overflowY: "auto" }}>
+                        <table
+                          style={{
+                            width: "100%",
+                            borderCollapse: "collapse",
+                          }}
+                        >
+                          <thead>
+                            <tr style={{ backgroundColor: "#f5f5f5" }}>
+                              <th
+                                style={{
+                                  padding: "12px 15px",
+                                  textAlign: "left",
+                                  borderBottom: "1px solid #ddd",
+                                  fontWeight: "600",
+                                  fontSize: "13px",
+                                }}
+                              >
+                                Book ID
+                              </th>
+                              <th
+                                style={{
+                                  padding: "12px 15px",
+                                  textAlign: "left",
+                                  borderBottom: "1px solid #ddd",
+                                  fontWeight: "600",
+                                  fontSize: "13px",
+                                }}
+                              >
+                                Book Name
+                              </th>
+                              <th
+                                style={{
+                                  padding: "12px 15px",
+                                  textAlign: "left",
+                                  borderBottom: "1px solid #ddd",
+                                  fontWeight: "600",
+                                  fontSize: "13px",
+                                }}
+                              >
+                                Publisher
+                              </th>
+                              <th
+                                style={{
+                                  padding: "12px 15px",
+                                  textAlign: "center",
+                                  borderBottom: "1px solid #ddd",
+                                  fontWeight: "600",
+                                  fontSize: "13px",
+                                }}
+                              >
+                                Available
+                              </th>
+                              <th
+                                style={{
+                                  padding: "12px 15px",
+                                  textAlign: "center",
+                                  borderBottom: "1px solid #ddd",
+                                  fontWeight: "600",
+                                  fontSize: "13px",
+                                }}
+                              >
+                                Action
+                              </th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {directIssueBookResults.map((book, index) => (
+                              <tr
+                                key={book.book_id}
+                                style={{
+                                  backgroundColor:
+                                    index % 2 === 0 ? "#ffffff" : "#f9f9f9",
+                                  borderBottom: "1px solid #ddd",
+                                }}
+                              >
+                                <td
+                                  style={{
+                                    padding: "12px 15px",
+                                    fontSize: "13px",
+                                  }}
+                                >
+                                  {book.book_id}
+                                </td>
+                                <td
+                                  style={{
+                                    padding: "12px 15px",
+                                    fontSize: "13px",
+                                  }}
+                                >
+                                  {book.book_name}
+                                </td>
+                                <td
+                                  style={{
+                                    padding: "12px 15px",
+                                    fontSize: "13px",
+                                  }}
+                                >
+                                  {book.publisher || "N/A"}
+                                </td>
+                                <td
+                                  style={{
+                                    padding: "12px 15px",
+                                    textAlign: "center",
+                                    fontSize: "13px",
+                                    fontWeight: "600",
+                                    color:
+                                      book.available_copies > 0
+                                        ? "#2e7d32"
+                                        : "#d32f2f",
+                                  }}
+                                >
+                                  {book.available_copies}
+                                </td>
+                                <td
+                                  style={{
+                                    padding: "12px 15px",
+                                    textAlign: "center",
+                                  }}
+                                >
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      selectBookForDirectIssue(book.book_id)
+                                    }
+                                    disabled={book.available_copies === 0}
+                                    style={{
+                                      backgroundColor:
+                                        book.available_copies > 0
+                                          ? "#63A088"
+                                          : "#ccc",
+                                      color: "#fff",
+                                      border: "none",
+                                      padding: "8px 16px",
+                                      borderRadius: "6px",
+                                      cursor:
+                                        book.available_copies > 0
+                                          ? "pointer"
+                                          : "not-allowed",
+                                      fontSize: "13px",
+                                      fontWeight: "600",
+                                    }}
+                                  >
+                                    Select
+                                  </button>
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  )}
+
+                  <div className="input-group">
+                    <label>
+                      <i className="fa-solid fa-book"></i> Selected Book ID
+                    </label>
+                    <input
+                      type="text"
+                      placeholder="Book ID will appear here after selection"
                       value={directIssueForm.book_id}
-                      onChange={(e) =>
-                        setDirectIssueForm({
-                          ...directIssueForm,
-                          book_id: e.target.value,
-                        })
-                      }
-                      required
+                      readOnly
+                      style={{
+                        backgroundColor: "#f5f5f5",
+                        cursor: "not-allowed",
+                      }}
                     />
                   </div>
 

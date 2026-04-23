@@ -1,12 +1,13 @@
 from flask import Flask
 from flask_cors import CORS
+from app.cache import cache
 import os
 
 try:
     from dotenv import load_dotenv
 except ImportError:
     load_dotenv = None
-
+from app.route.analytics import analytics
 from app.routes.auth import auth
 from app import db
 from app.routes.user_dashboard import dashboard
@@ -26,6 +27,7 @@ def create_app():
     load_backend_env()
     app = Flask(__name__)
     app.config["SECRET_KEY"] = os.environ.get("SECRET_KEY", "my-secret-key")
+    cache.init_app(app)
     CORS(
         app,
         resources={
@@ -45,4 +47,5 @@ def create_app():
     app.register_blueprint(ai) 
     app.register_blueprint(admin)
     app.register_blueprint(wishlist)  
+    app.register_blueprint(analytics)
     return app 
