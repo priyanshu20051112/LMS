@@ -321,6 +321,15 @@ const Home = () => {
   };
 
   const handleAddToWishlist = async (bookId) => {
+    const book = filteredBooks.find((b) => b.id === bookId);
+
+    // Only allow wishlist for unavailable books
+    if (book && book.available_copies > 0) {
+      setShowNotification(true);
+      setNotificationMsg("Add to wishlist when book becomes unavailable");
+      return;
+    }
+
     try {
       const response = await fetch("http://127.0.0.1:5000/add-to-wishlist", {
         method: "POST",
@@ -650,10 +659,16 @@ const Home = () => {
                       handleAddToWishlist(book.id);
                     }
                   }}
+                  disabled={
+                    book.available_copies > 0 &&
+                    !wishlistedBooks.includes(book.id)
+                  }
                   title={
                     wishlistedBooks.includes(book.id)
                       ? "Remove from wishlist"
-                      : "Add to wishlist"
+                      : book.available_copies > 0
+                        ? "Add to wishlist when unavailable"
+                        : "Add to wishlist"
                   }
                 >
                   <i
