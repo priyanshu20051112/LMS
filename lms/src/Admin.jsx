@@ -27,6 +27,12 @@ const Admin = () => {
   const [students, setStudents] = useState([]);
   const [bookSearch, setBookSearch] = useState("");
   const [studentSearch, setStudentSearch] = useState("");
+  const [directStudentSearch, setDirectStudentSearch] = useState("");
+  const [directBookSearch, setDirectBookSearch] = useState("");
+  const [studentSearchResults, setStudentSearchResults] = useState([]);
+  const [bookSearchResults, setBookSearchResults] = useState([]);
+  const [selectedStudent, setSelectedStudent] = useState(null);
+  const [selectedBook, setSelectedBook] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [successMsg, setSuccessMsg] = useState("");
@@ -268,6 +274,151 @@ const Admin = () => {
     } finally {
       setLoading(false);
     }
+  };
+
+  const searchStudentsForDirectIssue = async (e) => {
+    e.preventDefault();
+    const token = getToken();
+    if (!token) {
+      navigate("/");
+      return;
+    }
+
+    if (!directStudentSearch.trim()) {
+      showAlert("Input Required", "Please enter student name or Moodle ID.");
+      return;
+    }
+
+    setLoading(true);
+    setError("");
+    try {
+      const response = await fetch(
+        `http://127.0.0.1:5000/admin/students/search?q=${encodeURIComponent(directStudentSearch.trim())}`,
+        {
+          method: "GET",
+          headers: {
+            "Authorization": `Bearer ${token}`,
+            "Content-Type": "application/json"
+          }
+        }
+      );
+
+      const data = await response.json();
+      if (response.ok) {
+        setStudentSearchResults(data.students || []);
+        if (!data.students || data.students.length === 0) {
+          setError("No students found for this search.");
+        }
+      } else if (isUnauthorized(response)) {
+        return;
+      } else {
+        setError(data.message || "Failed to search students.");
+        setStudentSearchResults([]);
+      }
+    } catch (err) {
+      console.error("Error searching students:", err);
+      setError("Failed to connect to server");
+      setStudentSearchResults([]);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const searchBooksForDirectIssue = async (e) => {
+    e.preventDefault();
+    const token = getToken();
+    if (!token) {
+      navigate("/");
+      return;
+    }
+
+    setLoading(true);
+    setError("");
+    try {
+      const query = directBookSearch.trim();
+      const url = query
+        ? `http://127.0.0.1:5000/admin/available-books?search=${encodeURIComponent(query)}`
+        : "http://127.0.0.1:5000/admin/available-books";
+
+      const response = await fetch(url, {
+        method: "GET",
+        headers: {
+          "Authorization": `Bearer ${token}`,
+          "Content-Type": "application/json"
+        }
+      });
+
+      const data = await response.json();
+      if (response.ok) {
+        setBookSearchResults(data.books || []);
+        if (!data.books || data.books.length === 0) {
+          setError("No available books found for this search.");
+        }
+      } else if (isUnauthorized(response)) {
+        return;
+      } else {
+        setError(data.message || "Failed to search books.");
+        setBookSearchResults([]);
+      }
+    } catch (err) {
+      console.error("Error searching available books:", err);
+      setError("Failed to connect to server");
+      setBookSearchResults([]);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleDirectIssue = async () => {
+    const token = getToken();
+    if (!token) {
+      navigate("/");
+      return;
+    }
+
+    if (!selectedStudent || !selectedBook) {
+      showAlert("Selection Required", "Please select one student and one available book.");
+      return;
+    }
+
+    showConfirm(
+      "Confirm Direct Issue",
+      `Issue "${selectedBook.book_name}" to ${selectedStudent.fullname} (${selectedStudent.moodle_id}) without request?`,
+      async () => {
+        setLoading(true);
+        setError("");
+        try {
+          const response = await fetch("http://127.0.0.1:5000/admin/direct-issue", {
+            method: "POST",
+            headers: {
+              "Authorization": `Bearer ${token}`,
+              "Content-Type": "application/json"
+            },
+            body: JSON.stringify({
+              moodle_id: selectedStudent.moodle_id,
+              book_id: selectedBook.book_id
+            })
+          });
+
+          const data = await response.json();
+          if (response.ok) {
+            setSuccessMsg(data.message || "Book issued successfully");
+            setSelectedBook(null);
+            setBookSearchResults((prev) => prev.filter((book) => book.book_id !== selectedBook.book_id));
+            setTimeout(() => setSuccessMsg(""), 3000);
+          } else if (isUnauthorized(response)) {
+            return;
+          } else {
+            showAlert("Direct Issue Failed", data.message || "Failed to issue book.");
+          }
+        } catch (err) {
+          console.error("Error issuing book directly:", err);
+          showAlert("Connection Error", "Failed to connect to server");
+        } finally {
+          setLoading(false);
+        }
+      }
+    );
   };
 
   const handleAddBook = async (e) => {
@@ -911,6 +1062,12 @@ const Admin = () => {
               onClick={() => setActiveTab("addBook")}
             >
               <i className="fa-solid fa-square-plus"></i> Add Book
+            </button>
+            <button
+              className={activeTab === "directIssue" ? "menu-item active" : "menu-item"}
+              onClick={() => setActiveTab("directIssue")}
+            >
+              <i className="fa-solid fa-hand-holding-medical"></i> Direct Allotment
             </button>
           </div>
         </div>
@@ -1571,6 +1728,156 @@ const Admin = () => {
                     <i className="fa-solid fa-square-plus"></i> {loading ? "Adding..." : "Add Book"}
                   </button>
                 </form>
+              </div>
+            </div>
+          )}
+
+          {/* Direct Allotment Tab */}
+          {activeTab === "directIssue" && (
+            <div className="form-content">
+              <h3 className="section-title">Direct Book Allotment (Without Request)</h3>
+
+              {error && (
+                <div style={{ color: "red", marginBottom: "15px", padding: "10px", backgroundColor: "#ffebee", borderRadius: "5px" }}>
+                  {error}
+                </div>
+              )}
+
+              <div className="form-card" style={{ marginBottom: "24px" }}>
+                <h4 style={{ marginTop: 0, color: "#2c2c2c" }}>
+                  <i className="fa-solid fa-user-graduate" style={{ marginRight: "10px", color: "#63A088" }}></i>
+                  1. Search and Select Student
+                </h4>
+                <form onSubmit={searchStudentsForDirectIssue} className="search-bar-container">
+                  <input
+                    className="search-input"
+                    type="text"
+                    placeholder="Search by student name or Moodle ID"
+                    value={directStudentSearch}
+                    onChange={(e) => setDirectStudentSearch(e.target.value)}
+                  />
+                  <button className="search-btn" type="submit">
+                    <i className="fa-solid fa-search"></i> Search Student
+                  </button>
+                </form>
+
+                {studentSearchResults.length > 0 && (
+                  <div className="table-wrapper" style={{ marginTop: "10px" }}>
+                    <table className="data-table">
+                      <thead>
+                        <tr>
+                          <th>Moodle ID</th>
+                          <th>Full Name</th>
+                          <th>Department</th>
+                          <th>Issued</th>
+                          <th style={{ textAlign: "center" }}>Select</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {studentSearchResults.map((student) => (
+                          <tr
+                            key={student.moodle_id}
+                            style={{
+                              backgroundColor:
+                                selectedStudent?.moodle_id === student.moodle_id ? "#e8f5e9" : "transparent"
+                            }}
+                          >
+                            <td>{student.moodle_id}</td>
+                            <td>{student.fullname}</td>
+                            <td>{student.department || "N/A"}</td>
+                            <td>{student.issued_books}</td>
+                            <td style={{ textAlign: "center" }}>
+                              <button
+                                type="button"
+                                className="action-btn"
+                                style={{ backgroundColor: "#63A088", color: "white" }}
+                                onClick={() => setSelectedStudent(student)}
+                              >
+                                {selectedStudent?.moodle_id === student.moodle_id ? "Selected" : "Select"}
+                              </button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+
+              <div className="form-card" style={{ marginBottom: "24px" }}>
+                <h4 style={{ marginTop: 0, color: "#2c2c2c" }}>
+                  <i className="fa-solid fa-book" style={{ marginRight: "10px", color: "#63A088" }}></i>
+                  2. Search and Select Available Book
+                </h4>
+                <form onSubmit={searchBooksForDirectIssue} className="search-bar-container">
+                  <input
+                    className="search-input"
+                    type="text"
+                    placeholder="Search available books by name, publisher, description"
+                    value={directBookSearch}
+                    onChange={(e) => setDirectBookSearch(e.target.value)}
+                  />
+                  <button className="search-btn" type="submit">
+                    <i className="fa-solid fa-search"></i> Search Book
+                  </button>
+                </form>
+
+                {bookSearchResults.length > 0 && (
+                  <div className="table-wrapper" style={{ marginTop: "10px" }}>
+                    <table className="data-table">
+                      <thead>
+                        <tr>
+                          <th>Book ID</th>
+                          <th>Book Name</th>
+                          <th>Publisher</th>
+                          <th>Available</th>
+                          <th style={{ textAlign: "center" }}>Select</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {bookSearchResults.map((book) => (
+                          <tr
+                            key={book.book_id}
+                            style={{
+                              backgroundColor: selectedBook?.book_id === book.book_id ? "#e8f5e9" : "transparent"
+                            }}
+                          >
+                            <td>{book.book_id}</td>
+                            <td>{book.book_name}</td>
+                            <td>{book.publisher || "N/A"}</td>
+                            <td>{book.available_copies}</td>
+                            <td style={{ textAlign: "center" }}>
+                              <button
+                                type="button"
+                                className="action-btn"
+                                style={{ backgroundColor: "#63A088", color: "white" }}
+                                onClick={() => setSelectedBook(book)}
+                              >
+                                {selectedBook?.book_id === book.book_id ? "Selected" : "Select"}
+                              </button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+
+              <div className="form-card">
+                <h4 style={{ marginTop: 0, color: "#2c2c2c" }}>
+                  <i className="fa-solid fa-check-circle" style={{ marginRight: "10px", color: "#63A088" }}></i>
+                  3. Confirm Allotment
+                </h4>
+                <p style={{ marginBottom: "8px", color: "#444" }}>
+                  <strong>Student:</strong> {selectedStudent ? `${selectedStudent.fullname} (${selectedStudent.moodle_id})` : "Not selected"}
+                </p>
+                <p style={{ marginBottom: "16px", color: "#444" }}>
+                  <strong>Book:</strong> {selectedBook ? `${selectedBook.book_name} (ID: ${selectedBook.book_id})` : "Not selected"}
+                </p>
+                <button className="submit-btn" type="button" onClick={handleDirectIssue} disabled={loading}>
+                  <i className="fa-solid fa-hand-holding-medical"></i> {loading ? "Processing..." : "Allot Book Now"}
+                </button>
               </div>
             </div>
           )}
