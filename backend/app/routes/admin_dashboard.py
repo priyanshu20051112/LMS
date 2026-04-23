@@ -810,6 +810,221 @@ def delete_book(book_id):
         conn.close()
 
 
+@admin.route("/admin/students/search", methods=["GET"])
+def search_students_by_name():
+    payload, error = verify_admin()
+    if error:
+        return jsonify({"message": error[0]}), error[1]
+
+    query = request.args.get("q", "").strip()
+    if not query:
+        return jsonify({"students": [], "count": 0}), 200
+
+    conn = get_connection()
+    cursor = conn.cursor(dictionary=True)
+
+    try:
+        like_query = f"%{query}%"
+        cursor.execute(
+            """
+            SELECT
+                u.id AS moodle_id,
+                u.fullname,
+                u.department,
+                u.email,
+                COUNT(CASE WHEN t.status = 'issued' THEN 1 END) AS issued_books
+            FROM users u
+            LEFT JOIN transactions t ON u.id = t.moodle_id
+            WHERE u.fullname LIKE %s OR CAST(u.id AS CHAR) LIKE %s
+            GROUP BY u.id, u.fullname, u.department, u.email
+            ORDER BY u.fullname ASC
+            LIMIT 25
+            """,
+            (like_query, like_query),
+        )
+
+        students = cursor.fetchall()
+        return jsonify({"students": students, "count": len(students)}), 200
+    finally:
+        conn.close()
+
+
+@admin.route("/admin/available-books", methods=["GET"])
+def search_available_books():
+    payload, error = verify_admin()
+    if error:
+        return jsonify({"message": error[0]}), error[1]
+
+    search = request.args.get("search", "").strip()
+
+    conn = get_connection()
+    cursor = conn.cursor(dictionary=True)
+
+    try:
+        base_query = """
+            SELECT
+                b.book_id,
+                b.book_name,
+                b.publisher,
+                b.description,
+                COUNT(bc.copy_id) AS total_copies,
+                COUNT(bc.copy_id)
+                    - COUNT(CASE WHEN t.status = 'issued' THEN 1 END)
+                    AS available_copies
+            FROM books b
+            LEFT JOIN book_copies bc ON b.book_id = bc.book_id
+            LEFT JOIN transactions t
+                ON bc.copy_id = t.copy_id
+                AND t.status = 'issued'
+        """
+
+        params = []
+        where_clause = ""
+        if search:
+            where_clause = " WHERE b.book_name LIKE %s OR b.publisher LIKE %s OR b.description LIKE %s"
+            like_search = f"%{search}%"
+            params = [like_search, like_search, like_search]
+
+        cursor.execute(
+            base_query
+            + where_clause
+            + """
+            GROUP BY b.book_id, b.book_name, b.publisher, b.description
+            HAVING available_copies > 0
+            ORDER BY b.book_name ASC
+            LIMIT 50
+            """,
+            tuple(params),
+        )
+
+        books = cursor.fetchall()
+        return jsonify({"books": books, "count": len(books)}), 200
+    finally:
+        conn.close()
+
+
+@admin.route("/admin/direct-issue", methods=["POST"])
+def direct_issue_book():
+    payload, error = verify_admin()
+    if error:
+        return jsonify({"message": error[0]}), error[1]
+
+    data = request.get_json() or {}
+    moodle_id = data.get("moodle_id")
+    book_id = data.get("book_id")
+
+    if not moodle_id or not book_id:
+        return jsonify({"message": "moodle_id and book_id are required"}), 400
+
+    try:
+        moodle_id = int(moodle_id)
+        book_id = int(book_id)
+    except (TypeError, ValueError):
+        return jsonify({"message": "moodle_id and book_id must be valid numbers"}), 400
+
+    conn = get_connection()
+    cursor = conn.cursor(dictionary=True)
+
+    try:
+        conn.start_transaction()
+
+        cursor.execute(
+            """
+            SELECT id, fullname
+            FROM users
+            WHERE id = %s
+            """,
+            (moodle_id,),
+        )
+        student = cursor.fetchone()
+        if not student:
+            conn.rollback()
+            return jsonify({"message": "Student not found"}), 404
+
+        cursor.execute(
+            """
+            SELECT COUNT(*) AS count
+            FROM transactions
+            WHERE moodle_id = %s
+            AND status = 'issued'
+            """,
+            (moodle_id,),
+        )
+        if cursor.fetchone()["count"] >= MAX_BOOKS_ALLOWED:
+            conn.rollback()
+            return jsonify({"message": "Student reached max rental limit"}), 400
+
+        cursor.execute(
+            """
+            SELECT book_id, book_name
+            FROM books
+            WHERE book_id = %s
+            """,
+            (book_id,),
+        )
+        book = cursor.fetchone()
+        if not book:
+            conn.rollback()
+            return jsonify({"message": "Book not found"}), 404
+
+        cursor.execute(
+            """
+            SELECT bc.copy_id
+            FROM book_copies bc
+            LEFT JOIN transactions t
+                ON bc.copy_id = t.copy_id
+                AND t.status = 'issued'
+            WHERE bc.book_id = %s
+            AND t.copy_id IS NULL
+            LIMIT 1
+            FOR UPDATE
+            """,
+            (book_id,),
+        )
+        copy = cursor.fetchone()
+
+        if not copy:
+            conn.rollback()
+            return jsonify({"message": "No copy available for this book"}), 400
+
+        issue_date = date.today()
+        due_date = issue_date + timedelta(days=MAX_DAYS_ALLOWED)
+
+        cursor.execute(
+            """
+            INSERT INTO transactions
+            (copy_id, moodle_id, issue_date, due_date, status)
+            VALUES (%s, %s, %s, %s, 'issued')
+            """,
+            (copy["copy_id"], moodle_id, issue_date, due_date),
+        )
+
+        transaction_id = cursor.lastrowid
+        conn.commit()
+
+        return jsonify(
+            {
+                "message": "Book issued successfully without request",
+                "transaction_id": transaction_id,
+                "student": {
+                    "moodle_id": student["id"],
+                    "fullname": student["fullname"],
+                },
+                "book": {
+                    "book_id": book["book_id"],
+                    "book_name": book["book_name"],
+                },
+                "issue_date": str(issue_date),
+                "due_date": str(due_date),
+            }
+        ), 200
+    except Exception as e:
+        conn.rollback()
+        return jsonify({"message": str(e)}), 500
+    finally:
+        conn.close()
+
+
 @admin.route("/admin/analytics", methods=["GET"])
 def get_analytics():
     payload, error = verify_admin()

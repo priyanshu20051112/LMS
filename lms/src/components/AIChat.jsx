@@ -102,7 +102,8 @@ const AIChat = ({ onBookSelect }) => {
           ...prev,
           {
             type: "bot",
-            text: data.message || "Sorry, something went wrong. Please try again.",
+            text:
+              data.message || "Sorry, something went wrong. Please try again.",
           },
         ]);
       }
@@ -164,10 +165,11 @@ const AIChat = ({ onBookSelect }) => {
         title: book.title,
         publisher: book.publisher,
         description: book.description,
+        rating: book.rating,
         status: book.available_copies > 0 ? "Available" : "Issued",
         available_copies: book.available_copies,
         total_copies: book.total_copies || book.available_copies,
-        image: "/assets/demo.png"
+        image: "/assets/demo.png",
       });
       // Optionally minimize chat when book is selected
       // setIsOpen(false);
@@ -197,7 +199,11 @@ const AIChat = ({ onBookSelect }) => {
               <i className="fa-solid fa-robot"></i>
               <span>Library AI Assistant</span>
             </div>
-            <button className="ai-chat-clear" onClick={clearChat} title="Clear chat">
+            <button
+              className="ai-chat-clear"
+              onClick={clearChat}
+              title="Clear chat"
+            >
               <i className="fa-solid fa-trash-can"></i>
             </button>
           </div>
@@ -213,10 +219,10 @@ const AIChat = ({ onBookSelect }) => {
                 )}
                 <div className="ai-message-content">
                   <div className="ai-message-text">
-                    {msg.text.split('\n').map((line, i) => (
+                    {msg.text.split("\n").map((line, i) => (
                       <span key={i}>
                         {line}
-                        {i < msg.text.split('\n').length - 1 && <br />}
+                        {i < msg.text.split("\n").length - 1 && <br />}
                       </span>
                     ))}
                   </div>
@@ -225,8 +231,8 @@ const AIChat = ({ onBookSelect }) => {
                   {msg.books && msg.books.length > 0 && (
                     <div className="ai-book-list">
                       {msg.books.slice(0, 5).map((book, idx) => (
-                        <div 
-                          key={idx} 
+                        <div
+                          key={idx}
                           className="ai-book-card"
                           onClick={() => handleBookClick(book)}
                           style={{ cursor: "pointer" }}
@@ -236,12 +242,28 @@ const AIChat = ({ onBookSelect }) => {
                           <div className="ai-book-publisher">
                             {book.publisher}
                           </div>
+                          {book.rating && (
+                            <div className="ai-book-rating">
+                              <div className="ai-rating-stars">
+                                {[...Array(5)].map((_, i) => (
+                                  <i
+                                    key={i}
+                                    className={`fa-solid fa-star ${i < Math.floor(book.rating) ? "filled" : ""}`}
+                                  ></i>
+                                ))}
+                              </div>
+                              <span className="ai-rating-value">
+                                {book.rating.toFixed(1)}
+                              </span>
+                            </div>
+                          )}
                           <div className="ai-book-availability">
                             <i className="fa-solid fa-book"></i>
                             {book.available_copies} available
                           </div>
                           <div className="ai-book-action">
-                            <i className="fa-solid fa-arrow-right"></i> View Details
+                            <i className="fa-solid fa-arrow-right"></i> View
+                            Details
                           </div>
                         </div>
                       ))}

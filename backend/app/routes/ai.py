@@ -159,6 +159,7 @@ def search_books(query):
                 b.book_name AS title,
                 b.publisher,
                 b.description,
+                b.rating,
                 COUNT(bc.copy_id) AS total_copies,
                 COUNT(bc.copy_id) 
                   - COUNT(CASE WHEN t.status = 'issued' THEN 1 END) 
@@ -175,7 +176,8 @@ def search_books(query):
                 b.book_id,
                 b.book_name,
                 b.publisher,
-                b.description
+                b.description,
+                b.rating
             HAVING available_copies > 0
             ORDER BY relevance DESC, b.book_name ASC
         """, tuple(all_params))
