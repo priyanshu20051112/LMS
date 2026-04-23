@@ -70,6 +70,40 @@ def send_otp_email(to_email, student_name, book_name, otp):
         return False, str(e)
 
 
+def send_book_availability_email(to_email, student_name, book_name):
+    """Send email to notify that a wishlisted book is now available"""
+    smtp_host = os.environ.get("SMTP_HOST", "").strip()
+    smtp_port = int(os.environ.get("SMTP_PORT", "587"))
+    smtp_user = os.environ.get("SMTP_USER", "").strip()
+    smtp_password = os.environ.get("SMTP_PASSWORD", "").strip()
+    smtp_from = os.environ.get("SMTP_FROM", smtp_user).strip()
+
+    if not smtp_host:
+        return False, "SMTP is not configured"
+
+    try:
+        msg = EmailMessage()
+        msg["Subject"] = f"'{book_name}' is now available in library!"
+        msg["From"] = smtp_from
+        msg["To"] = to_email
+        msg.set_content(
+            f"Hello {student_name},\n\n"
+            f"Great news! '{book_name}' that you added to your wishlist is now available.\n\n"
+            f"Please visit the library to borrow it.\n\n"
+            "Thank you for using our library management system!"
+        )
+
+        with smtplib.SMTP(smtp_host, smtp_port, timeout=20) as server:
+            server.starttls()
+            if smtp_user and smtp_password:
+                server.login(smtp_user, smtp_password)
+            server.send_message(msg)
+
+        return True, None
+    except Exception as e:
+        return False, str(e)
+
+
 def issue_request_transaction(cursor, request_id):
     cursor.execute(
         """
@@ -460,9 +494,10 @@ def return_book(transaction_id):
     try:
         # Check if transaction exists and is issued
         cursor.execute("""
-            SELECT transaction_id, status
-            FROM transactions
-            WHERE transaction_id = %s
+            SELECT t.transaction_id, t.status, t.copy_id, bc.book_id
+            FROM transactions t
+            JOIN book_copies bc ON t.copy_id = bc.copy_id
+            WHERE t.transaction_id = %s
         """, (transaction_id,))
 
         transaction = cursor.fetchone()
@@ -473,6 +508,8 @@ def return_book(transaction_id):
         if transaction["status"] != "issued":
             return jsonify({"message": "Book is not currently issued"}), 400
 
+        book_id = transaction["book_id"]
+
         # Mark as returned
         cursor.execute("""
             UPDATE transactions
@@ -482,7 +519,37 @@ def return_book(transaction_id):
         """, (transaction_id,))
 
         conn.commit()
-        return jsonify({"message": "Book returned successfully"}), 200
+
+        # Get book information
+        cursor.execute("""
+            SELECT book_name FROM books WHERE book_id = %s
+        """, (book_id,))
+        book = cursor.fetchone()
+        book_name = book["book_name"] if book else "Unknown Book"
+
+        # Send notifications to users who have this book in their wishlist
+        cursor.execute("""
+            SELECT u.id as moodle_id, u.fullname, u.email
+            FROM wishlist w
+            JOIN users u ON w.moodle_id = u.id
+            WHERE w.book_id = %s
+        """, (book_id,))
+
+        wishlist_users = cursor.fetchall()
+
+        # Send emails to all users with this book in wishlist
+        for user in wishlist_users:
+            success, error_msg = send_book_availability_email(
+                user["email"],
+                user["fullname"],
+                book_name
+            )
+            if success:
+                print(f"✅ Notification sent to {user['email']} for book {book_name}")
+            else:
+                print(f"❌ Failed to send notification to {user['email']}: {error_msg}")
+
+        return jsonify({"message": "Book returned successfully and notifications sent to wishlisted users"}), 200
 
     except Exception as e:
         conn.rollback()
