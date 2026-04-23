@@ -61,6 +61,15 @@ const Home = () => {
   const navigate = useNavigate();
   const [showNotification, setShowNotification] = useState(false);
   const [notificationMsg, setNotificationMsg] = useState("");
+  const [debouncedSearchQuery, setDebouncedSearchQuery] = useState("");
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedSearchQuery(searchQuery.trim());
+    }, 350);
+
+    return () => clearTimeout(timer);
+  }, [searchQuery]);
 
   // Fetch books from backend API
   useEffect(() => {
@@ -97,7 +106,11 @@ const Home = () => {
       setUsername(userData.moodle_id);
 
       try {
-        const response = await fetch("http://127.0.0.1:5000/dashboard", {
+        const query = debouncedSearchQuery
+          ? `?search=${encodeURIComponent(debouncedSearchQuery)}`
+          : "";
+
+        const response = await fetch(`http://127.0.0.1:5000/dashboard${query}`, {
           method: "GET",
           headers: {
             "Authorization": `Bearer ${userData.token}`,
@@ -140,7 +153,7 @@ const Home = () => {
     };
 
     fetchDashboardData();
-  }, [navigate]);
+  }, [navigate, debouncedSearchQuery]);
 
   useEffect(() => {
     const handleClickOutside = (event) => {

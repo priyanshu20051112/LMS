@@ -213,6 +213,33 @@
   margin-bottom: 0.3rem;
 }
 
+.ai-book-rating {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  margin-bottom: 0.3rem;
+}
+
+.ai-rating-stars {
+  display: flex;
+  gap: 0.15rem;
+}
+
+.ai-rating-stars i {
+  font-size: 0.65rem;
+  color: #ddd;
+}
+
+.ai-rating-stars i.filled {
+  color: #d4b06f;
+}
+
+.ai-rating-value {
+  font-size: 0.75rem;
+  color: #666;
+  font-weight: 500;
+}
+
 .ai-book-availability {
   display: flex;
   align-items: center;

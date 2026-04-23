@@ -159,6 +159,7 @@ def search_books(query):
                 b.book_name AS title,
                 b.publisher,
                 b.description,
+                                COALESCE(b.rating, 0) AS rating,
                 COUNT(bc.copy_id) AS total_copies,
                 COUNT(bc.copy_id) 
                   - COUNT(CASE WHEN t.status = 'issued' THEN 1 END) 
@@ -175,9 +176,11 @@ def search_books(query):
                 b.book_id,
                 b.book_name,
                 b.publisher,
-                b.description
+                b.description,
+                b.rating,
+                b.cover_url
             HAVING available_copies > 0
-            ORDER BY relevance DESC, b.book_name ASC
+            ORDER BY COALESCE(b.rating, 0) DESC, relevance DESC, b.book_name ASC
         """, tuple(all_params))
         
         books = cursor.fetchall()
@@ -418,7 +421,7 @@ def get_ai_recommendation(moodle_id, topic, level):
     
     # Prepare book info for AI
     book_info = "\n".join([
-        f"- {b['title']} (Publisher: {b['publisher']}, Available: {b['available_copies']} copies): {b['description'] or 'No description'}"
+        f"- {b['title']} (Rating: {float(b.get('rating', 0)):.1f}/5, Publisher: {b['publisher']}, Available: {b['available_copies']} copies): {b['description'] or 'No description'}"
         for b in books[:10]  # Limit to 10 books for API call
     ])
     
@@ -447,7 +450,8 @@ Their experience level: {level}
 Here are the ONLY books available in our library (you MUST only recommend from this list):
 {book_info}
 
-Please recommend the most suitable books from this list and explain why each one is good for a {level} learner."""
+Please recommend the most suitable books from this list and explain why each one is good for a {level} learner.
+The list is already sorted by rating from highest to lowest, so keep that order in your recommendations."""
 
         # Call OpenRouter API with free model
         response = client.chat.completions.create(

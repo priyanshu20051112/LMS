@@ -95,14 +95,12 @@ def user_dashboard():
         top_books = cursor.fetchall()
         cache.set(cache_key_top, top_books, timeout=120)
 
-    cache_key_books = f"books:{page}:{searched}"
-    all_books = cache.get(cache_key_books)
+    searched = searched.strip()
+    all_books = None
 
-    if not all_books:
-        print("📚 DB HIT: books")
-
-        if searched:
-            cursor.execute("""
+    if searched:
+        print("📚 DB HIT: searched books")
+        cursor.execute("""
                 SELECT 
                     b.book_id,
                     b.book_name,
@@ -129,7 +127,14 @@ def user_dashboard():
                     b.rating
                 LIMIT %s OFFSET %s
             """, ("%" + searched + "%", limit, offset))
-        else:
+        all_books = cursor.fetchall()
+    else:
+        cache_key_books = f"books:{page}:"
+        all_books = cache.get(cache_key_books)
+
+        if all_books is None:
+            print("📚 DB HIT: books")
+
             cursor.execute("""
                 SELECT 
                     b.book_id,
@@ -157,8 +162,8 @@ def user_dashboard():
                 LIMIT %s OFFSET %s
             """, (limit, offset))
 
-        all_books = cursor.fetchall()
-        cache.set(cache_key_books, all_books, timeout=60)
+            all_books = cursor.fetchall()
+            cache.set(cache_key_books, all_books, timeout=60)
 
  
     cursor.execute("""
