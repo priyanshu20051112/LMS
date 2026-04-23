@@ -7,7 +7,7 @@ try:
     from dotenv import load_dotenv
 except ImportError:
     load_dotenv = None
-from app.route.analytics import analytics
+from app.routes.analytics import analytics
 from app.routes.auth import auth
 from app import db
 from app.routes.user_dashboard import dashboard

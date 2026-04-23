@@ -34,7 +34,9 @@ const renderStars = (rating) => {
       {Array.from({ length: 5 }, (_, index) => (
         <i
           key={index}
-          className={index < normalized ? "fa-solid fa-star" : "fa-regular fa-star"}
+          className={
+            index < normalized ? "fa-solid fa-star" : "fa-regular fa-star"
+          }
           style={{ marginRight: 2 }}
         ></i>
       ))}
@@ -60,12 +62,62 @@ const Home = () => {
   const [authorSearch, setAuthorSearch] = useState("");
   const [publisherSearch, setPublisherSearch] = useState("");
   const [loading, setLoading] = useState(true);
+  const [searchLoading, setSearchLoading] = useState(false);
+  const [userToken, setUserToken] = useState("");
   const navigate = useNavigate();
   const [showNotification, setShowNotification] = useState(false);
   const [notificationMsg, setNotificationMsg] = useState("");
   const [showWishlist, setShowWishlist] = useState(false);
-  const [userToken, setUserToken] = useState("");
   const [wishlistedBooks, setWishlistedBooks] = useState([]);
+
+  // Server-side search for books
+  useEffect(() => {
+    if (!userToken) return;
+
+    const searchBooks = async () => {
+      if (searchQuery.trim() === "") {
+        // If search is empty, reset to original books
+        return;
+      }
+
+      setSearchLoading(true);
+      try {
+        const response = await fetch(
+          `http://127.0.0.1:5000/dashboard?search=${encodeURIComponent(searchQuery)}`,
+          {
+            method: "GET",
+            headers: {
+              Authorization: `Bearer ${userToken}`,
+              "Content-Type": "application/json",
+            },
+          },
+        );
+
+        if (response.ok) {
+          const data = await response.json();
+          const transformedBooks = data.books.map((book) => ({
+            id: book.book_id,
+            title: book.book_name,
+            publisher: book.publisher,
+            description: book.description,
+            rating: Number(book.rating) || 0,
+            status: book.available_copies > 0 ? "Available" : "Issued",
+            available_copies: book.available_copies,
+            total_copies: book.total_copies,
+            image: book.cover_url || DEFAULT_COVER,
+          }));
+          setFilteredBooks(transformedBooks);
+        }
+      } catch (error) {
+        console.error("Error searching books:", error);
+      } finally {
+        setSearchLoading(false);
+      }
+    };
+
+    const debounceTimer = setTimeout(searchBooks, 500);
+    return () => clearTimeout(debounceTimer);
+  }, [searchQuery, userToken]);
 
   // Fetch books from backend API
   useEffect(() => {
@@ -106,15 +158,15 @@ const Home = () => {
         const response = await fetch("http://127.0.0.1:5000/dashboard", {
           method: "GET",
           headers: {
-            "Authorization": `Bearer ${userData.token}`,
-            "Content-Type": "application/json"
-          }
+            Authorization: `Bearer ${userData.token}`,
+            "Content-Type": "application/json",
+          },
         });
 
         if (response.ok) {
           const data = await response.json();
           // Transform backend data to frontend format
-          const transformedBooks = data.books.map(book => ({
+          const transformedBooks = data.books.map((book) => ({
             id: book.book_id,
             title: book.book_name,
             publisher: book.publisher,
@@ -123,7 +175,7 @@ const Home = () => {
             status: book.available_copies > 0 ? "Available" : "Issued",
             available_copies: book.available_copies,
             total_copies: book.total_copies,
-            image: book.cover_url || DEFAULT_COVER
+            image: book.cover_url || DEFAULT_COVER,
           }));
           setBooks(transformedBooks);
           setFilteredBooks(transformedBooks);
@@ -132,16 +184,21 @@ const Home = () => {
 
           // Fetch wishlist after dashboard data
           try {
-            const wishlistResponse = await fetch("http://127.0.0.1:5000/wishlist", {
-              method: "GET",
-              headers: {
-                "Authorization": `Bearer ${userData.token}`,
-                "Content-Type": "application/json"
-              }
-            });
+            const wishlistResponse = await fetch(
+              "http://127.0.0.1:5000/wishlist",
+              {
+                method: "GET",
+                headers: {
+                  Authorization: `Bearer ${userData.token}`,
+                  "Content-Type": "application/json",
+                },
+              },
+            );
             if (wishlistResponse.ok) {
               const wishlistData = await wishlistResponse.json();
-              setWishlistedBooks(wishlistData.wishlist.map(item => item.book_id) || []);
+              setWishlistedBooks(
+                wishlistData.wishlist.map((item) => item.book_id) || [],
+              );
             }
           } catch (err) {
             console.error("Error fetching wishlist:", err);
@@ -193,15 +250,9 @@ const Home = () => {
         );
       }
     }
-    if (searchQuery.trim() !== "") {
-      const query = searchQuery.toLowerCase();
-      filtered = filtered.filter(
-        (book) =>
-          book.title.toLowerCase().includes(query) ||
-          (book.description && book.description.toLowerCase().includes(query)) ||
-          (book.publisher && book.publisher.toLowerCase().includes(query)),
-      );
-    } else {
+
+    // Only apply local sorting if not searching
+    if (searchQuery.trim() === "") {
       // Keep books with real cover URLs on top in normal browse mode.
       filtered = [...filtered].sort((a, b) => {
         const aHasRealCover = a.image && a.image !== DEFAULT_COVER;
@@ -209,9 +260,9 @@ const Home = () => {
         if (aHasRealCover === bHasRealCover) return 0;
         return aHasRealCover ? -1 : 1;
       });
+      setFilteredBooks(filtered);
     }
-    setFilteredBooks(filtered);
-  }, [selectedFilter, searchQuery, books]);
+  }, [selectedFilter, books, searchQuery]);
 
   const uniqueStatuses = [...new Set(books.map((book) => book.status))];
   const uniquePublishers = [
@@ -274,14 +325,14 @@ const Home = () => {
       const response = await fetch("http://127.0.0.1:5000/add-to-wishlist", {
         method: "POST",
         headers: {
-          "Authorization": `Bearer ${userToken}`,
-          "Content-Type": "application/json"
+          Authorization: `Bearer ${userToken}`,
+          "Content-Type": "application/json",
         },
-        body: JSON.stringify({ book_id: bookId })
+        body: JSON.stringify({ book_id: bookId }),
       });
 
       const data = await response.json();
-      
+
       if (response.ok) {
         setWishlistedBooks([...wishlistedBooks, bookId]);
         setShowNotification(true);
@@ -302,17 +353,20 @@ const Home = () => {
 
   const handleRemoveFromWishlist = async (bookId) => {
     try {
-      const response = await fetch("http://127.0.0.1:5000/remove-from-wishlist", {
-        method: "DELETE",
-        headers: {
-          "Authorization": `Bearer ${userToken}`,
-          "Content-Type": "application/json"
+      const response = await fetch(
+        "http://127.0.0.1:5000/remove-from-wishlist",
+        {
+          method: "DELETE",
+          headers: {
+            Authorization: `Bearer ${userToken}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ book_id: bookId }),
         },
-        body: JSON.stringify({ book_id: bookId })
-      });
+      );
 
       if (response.ok) {
-        setWishlistedBooks(wishlistedBooks.filter(id => id !== bookId));
+        setWishlistedBooks(wishlistedBooks.filter((id) => id !== bookId));
         setShowNotification(true);
         setNotificationMsg("Removed from wishlist");
       }
@@ -340,7 +394,7 @@ const Home = () => {
           PCT's A. P. Shah Institute of Technology
         </h1>
         <div className="user-section">
-          <button 
+          <button
             className="wishlist-nav-button"
             onClick={() => setShowWishlist(true)}
             title="View Wishlist"
@@ -378,13 +432,33 @@ const Home = () => {
       </nav>
 
       <div className="search-filter-container">
-        <input
-          type="text"
-          className="search-bar"
-          placeholder="Search for books..."
-          value={searchQuery}
-          onChange={(e) => setSearchQuery(e.target.value)}
-        />
+        <div className="search-bar-wrapper">
+          <input
+            type="text"
+            className="search-bar"
+            placeholder="Search for books..."
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+          />
+          {searchLoading && searchQuery.trim() !== "" && (
+            <div
+              style={{
+                position: "absolute",
+                right: "10px",
+                top: "50%",
+                transform: "translateY(-50%)",
+                display: "flex",
+                alignItems: "center",
+                gap: "5px",
+              }}
+            >
+              <i
+                className="fa-solid fa-spinner"
+                style={{ animation: "spin 1s linear infinite" }}
+              ></i>
+            </div>
+          )}
+        </div>
         <div className="filter-wrapper">
           <button className="filter-button" onClick={handleFilterClick}>
             <img src="/assets/filter-icon.png" alt="Filter" />
@@ -489,11 +563,12 @@ const Home = () => {
           </div>
         ) : (
           issuedBooks.map((book, index) => (
-            <div
-              className="book-card"
-              key={index}
-            >
-              <img src={book.cover_url || DEFAULT_COVER} alt={book.book_name} className="book-image" />
+            <div className="book-card" key={index}>
+              <img
+                src={book.cover_url || DEFAULT_COVER}
+                alt={book.book_name}
+                className="book-image"
+              />
               <h4>{book.book_name}</h4>
               <p style={{ fontSize: "0.9em", color: "#888" }}>
                 Due: {new Date(book.due_date).toLocaleDateString()}
@@ -505,7 +580,9 @@ const Home = () => {
       </div>
 
       {/* Requested Books Section */}
-      <h2 style={{ marginLeft: "15rem", marginTop: "2rem" }}>Requested Books</h2>
+      <h2 style={{ marginLeft: "15rem", marginTop: "2rem" }}>
+        Requested Books
+      </h2>
       <div className="book-grid">
         {loading ? (
           <div style={{ marginLeft: "2rem", color: "#d4b06f" }}>
@@ -530,7 +607,10 @@ const Home = () => {
               <p style={{ fontSize: "0.85em", color: "#666" }}>
                 Requested: {new Date(book.request_date).toLocaleDateString()}
               </p>
-              <span className="book-status issued" style={{ textTransform: "capitalize" }}>
+              <span
+                className="book-status issued"
+                style={{ textTransform: "capitalize" }}
+              >
                 {book.status}
               </span>
             </div>
@@ -551,14 +631,17 @@ const Home = () => {
           </div>
         ) : (
           filteredBooks.map((book) => (
-            <div
-              className="book-card"
-              key={book.id}
-            >
+            <div className="book-card" key={book.id}>
               <div className="book-card-image-container">
-                <img src={book.image} alt={book.title} className="book-image" onClick={() => setSelectedBook(book)} style={{ cursor: "pointer" }} />
-                <button 
-                  className={`book-wishlist-btn ${wishlistedBooks.includes(book.id) ? 'wishlisted' : ''}`}
+                <img
+                  src={book.image}
+                  alt={book.title}
+                  className="book-image"
+                  onClick={() => setSelectedBook(book)}
+                  style={{ cursor: "pointer" }}
+                />
+                <button
+                  className={`book-wishlist-btn ${wishlistedBooks.includes(book.id) ? "wishlisted" : ""}`}
                   onClick={(e) => {
                     e.stopPropagation();
                     if (wishlistedBooks.includes(book.id)) {
@@ -567,12 +650,23 @@ const Home = () => {
                       handleAddToWishlist(book.id);
                     }
                   }}
-                  title={wishlistedBooks.includes(book.id) ? "Remove from wishlist" : "Add to wishlist"}
+                  title={
+                    wishlistedBooks.includes(book.id)
+                      ? "Remove from wishlist"
+                      : "Add to wishlist"
+                  }
                 >
-                  <i className={`fa-${wishlistedBooks.includes(book.id) ? 'solid' : 'regular'} fa-heart`}></i>
+                  <i
+                    className={`fa-${wishlistedBooks.includes(book.id) ? "solid" : "regular"} fa-heart`}
+                  ></i>
                 </button>
               </div>
-              <h4 onClick={() => setSelectedBook(book)} style={{ cursor: "pointer" }}>{book.title}</h4>
+              <h4
+                onClick={() => setSelectedBook(book)}
+                style={{ cursor: "pointer" }}
+              >
+                {book.title}
+              </h4>
               <p style={{ fontSize: "0.9em", color: "#888" }}>
                 {book.publisher}
               </p>
@@ -582,7 +676,11 @@ const Home = () => {
                   {Number(book.rating || 0).toFixed(1)}
                 </span>
               </p>
-              <span className={`book-status ${book.status.toLowerCase()}`} onClick={() => setSelectedBook(book)} style={{ cursor: "pointer" }}>
+              <span
+                className={`book-status ${book.status.toLowerCase()}`}
+                onClick={() => setSelectedBook(book)}
+                style={{ cursor: "pointer" }}
+              >
                 {book.status} ({book.available_copies}/{book.total_copies})
               </span>
             </div>
