@@ -1,5 +1,6 @@
 from flask import Flask
 from flask_cors import CORS
+from app.cache import cache
 import os
 
 try:
@@ -25,6 +26,7 @@ def create_app():
     load_backend_env()
     app = Flask(__name__)
     app.config["SECRET_KEY"] = os.environ.get("SECRET_KEY", "my-secret-key")
+    cache.init_app(app)
     CORS(
         app,
         resources={

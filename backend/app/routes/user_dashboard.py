@@ -2,6 +2,7 @@ from flask import Flask,Blueprint,jsonify,request,current_app
 from app.db import get_connection
 from app.routes.auth import username
 from datetime import date,timedelta
+from app.cache import cache
 import jwt
 dashboard = Blueprint("dashboard",__name__)
 
@@ -20,7 +21,7 @@ def ensure_book_ratings_table(cursor):
         """
     )
 
-    # Backward compatibility for previously created table versions.
+   
     try:
         cursor.execute("ALTER TABLE book_ratings DROP FOREIGN KEY book_ratings_ibfk_2")
     except Exception:
@@ -31,85 +32,54 @@ def ensure_book_ratings_table(cursor):
     except Exception:
         pass
 
-@dashboard.route("/dashboard",methods=["GET"])
+@dashboard.route("/dashboard", methods=["GET"])
 def user_dashboard():
-    #jwt verification
+  
     auth_header = request.headers.get("Authorization")
     if not auth_header or not auth_header.startswith("Bearer "):
-        return jsonify(
-            {
-                "message": "token missing"
-            }
-        ),401
+        return jsonify({"message": "token missing"}), 401
+
     token = auth_header.split(" ")[1]
+
     try:
         payload = jwt.decode(
             token,
-           current_app.config["SECRET_KEY"],
-           algorithms=["HS256"]
+            current_app.config["SECRET_KEY"],
+            algorithms=["HS256"]
         )
-    except jwt.ExpiredSignatureError :
-        return jsonify(
-            {
-                "message":"token expired"
-            }
-        ),401
+    except jwt.ExpiredSignatureError:
+        return jsonify({"message": "token expired"}), 401
     except jwt.InvalidTokenError:
-        return jsonify(
-            {
-                "message":"invalid token"
-            }
-        ),401
+        return jsonify({"message": "invalid token"}), 401
+
     moodle_id = payload["moodle_id"]
-    name= username(moodle_id)
-    #search bar
-    searched= request.args.get("search","")
-    conn=get_connection()
-    cursor=conn.cursor(dictionary=True)
-    if searched:
-        cursor.execute("""
-                    SELECT 
-                b.book_id,
-                b.book_name,
-                b.publisher,
-                b.description,
-                   b.cover_url,
-                                COALESCE(b.rating, 0) AS rating,
-                COUNT(bc.copy_id) AS total_copies,
-                COUNT(bc.copy_id) 
-                - COUNT(CASE WHEN t.status = 'issued' THEN 1 END) 
-                AS available_copies
-            FROM books b
-            LEFT JOIN book_copies bc 
-                ON b.book_id = bc.book_id
-            LEFT JOIN transactions t 
-                ON bc.copy_id = t.copy_id 
-                AND t.status = 'issued'
-            WHERE b.book_name LIKE %s
-            GROUP BY 
-                b.book_id,
-                b.book_name,
-                b.publisher,
-                   b.description,
-                   b.cover_url,
-                   b.rating
-        """, ("%" + searched + "%",))
-    else:
+    name = username(moodle_id)
+
+   
+    page = request.args.get("page", 1, type=int)
+    limit = 10
+    offset = (page - 1) * limit
+    searched = request.args.get("search", "")
+
+    conn = get_connection()
+    cursor = conn.cursor(dictionary=True)
+
+    cache_key_top = "top_books"
+    top_books = cache.get(cache_key_top)
+
+    if not top_books:
+        print("🔥 DB HIT: top_books")
+
         cursor.execute("""
             SELECT 
                 b.book_id,
                 b.book_name,
                 b.publisher,
-                b.description,
-                   b.cover_url,
-                                COALESCE(b.rating, 0) AS rating,
-                COUNT(bc.copy_id) AS total_copies,
-                COUNT(bc.copy_id) 
-                - COUNT(CASE WHEN t.status = 'issued' THEN 1 END) 
-                AS available_copies
+                b.cover_url,
+                COALESCE(b.rating, 0) AS rating,
+                COUNT(t.transaction_id) AS issue_count
             FROM books b
-            LEFT JOIN book_copies bc 
-                ON b.book_id = bc.book_id
+            LEFT JOIN book_copies bc ON b.book_id = bc.book_id
             LEFT JOIN transactions t 
                 ON bc.copy_id = t.copy_id 
                 AND t.status = 'issued'
@@ -117,31 +87,98 @@ def user_dashboard():
                 b.book_id,
                 b.book_name,
                 b.publisher,
-                   b.description,
-                   b.cover_url,
-                   b.rating
+                b.cover_url,
+                b.rating
+            ORDER BY issue_count DESC
+            LIMIT 10
         """)
-    #already issued books
-    all_books = cursor.fetchall()
-    cursor.execute("""
+        top_books = cursor.fetchall()
+        cache.set(cache_key_top, top_books, timeout=120)
+
+    cache_key_books = f"books:{page}:{searched}"
+    all_books = cache.get(cache_key_books)
+
+    if not all_books:
+        print("📚 DB HIT: books")
+
+        if searched:
+            cursor.execute("""
                 SELECT 
                     b.book_id,
                     b.book_name,
                     b.publisher,
-               b.cover_url,
+                    b.description,
+                    b.cover_url,
                     COALESCE(b.rating, 0) AS rating,
-                    t.issue_date,
-                    t.due_date
-                FROM transactions t
-                JOIN book_copies bc ON t.copy_id = bc.copy_id
-                JOIN books b ON bc.book_id = b.book_id
-                WHERE t.moodle_id = %s
-                AND t.status = 'issued'
+                    COUNT(bc.copy_id) AS total_copies,
+                    COUNT(bc.copy_id) 
+                    - COUNT(CASE WHEN t.status = 'issued' THEN 1 END) 
+                    AS available_copies
+                FROM books b
+                LEFT JOIN book_copies bc ON b.book_id = bc.book_id
+                LEFT JOIN transactions t 
+                    ON bc.copy_id = t.copy_id 
+                    AND t.status = 'issued'
+                WHERE b.book_name LIKE %s
+                GROUP BY 
+                    b.book_id,
+                    b.book_name,
+                    b.publisher,
+                    b.description,
+                    b.cover_url,
+                    b.rating
+                LIMIT %s OFFSET %s
+            """, ("%" + searched + "%", limit, offset))
+        else:
+            cursor.execute("""
+                SELECT 
+                    b.book_id,
+                    b.book_name,
+                    b.publisher,
+                    b.description,
+                    b.cover_url,
+                    COALESCE(b.rating, 0) AS rating,
+                    COUNT(bc.copy_id) AS total_copies,
+                    COUNT(bc.copy_id) 
+                    - COUNT(CASE WHEN t.status = 'issued' THEN 1 END) 
+                    AS available_copies
+                FROM books b
+                LEFT JOIN book_copies bc ON b.book_id = bc.book_id
+                LEFT JOIN transactions t 
+                    ON bc.copy_id = t.copy_id 
+                    AND t.status = 'issued'
+                GROUP BY 
+                    b.book_id,
+                    b.book_name,
+                    b.publisher,
+                    b.description,
+                    b.cover_url,
+                    b.rating
+                LIMIT %s OFFSET %s
+            """, (limit, offset))
+
+        all_books = cursor.fetchall()
+        cache.set(cache_key_books, all_books, timeout=60)
+
+ 
+    cursor.execute("""
+        SELECT 
+            b.book_id,
+            b.book_name,
+            b.publisher,
+            b.cover_url,
+            COALESCE(b.rating, 0) AS rating,
+            t.issue_date,
+            t.due_date
+        FROM transactions t
+        JOIN book_copies bc ON t.copy_id = bc.copy_id
+        JOIN books b ON bc.book_id = b.book_id
+        WHERE t.moodle_id = %s
+        AND t.status = 'issued'
     """, (moodle_id,))
     issued_books = cursor.fetchall()
 
-    cursor.execute(
-        """
+    cursor.execute("""
         SELECT
             r.request_id,
             r.book_id,
@@ -153,30 +190,28 @@ def user_dashboard():
         FROM issue_requests r
         JOIN books b ON r.book_id = b.book_id
         WHERE r.moodle_id = %s
-                    AND r.status = 'pending'
+        AND r.status = 'pending'
         ORDER BY r.request_date DESC
-        """,
-        (moodle_id,),
-    )
+    """, (moodle_id,))
     requested_books = cursor.fetchall()
+
     conn.close()
-    
 
+    return jsonify({
+        "message": "Welcome to dashboard",
+        "username": name,
 
-    return jsonify(
-        {
-            "message": f"Welcome to dashboard",
-            "moodle_id":moodle_id,
-            "username":name,
-            "Total_books":len(all_books),
-            "books" : all_books,
-            "issued_books": issued_books,
-            "issued_count":len(issued_books),
-            "requested_books": requested_books,
-            "requested_count": len(requested_books)
-        }
-    ),200
+        "top_books": top_books,
+        "books": all_books,
 
+        "page": page,
+        "limit": limit,
+
+        "issued_books": issued_books,
+        "requested_books": requested_books,
+        "issued_count": len(issued_books),
+        "requested_count": len(requested_books)
+    }), 200
 
 @dashboard.route("/history", methods=["GET"])
 def user_history():
